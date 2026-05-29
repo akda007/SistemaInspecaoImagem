@@ -8,6 +8,7 @@ Este repositorio documenta a implementacao de um sistema automatizado para triag
 ### Estrutura do Repositorio
 ```text
 .
+├── dataset/                  # Dataset de dados truncado para maçãs
 ├── notebooks/                # Jupyter Notebooks de desenvolvimento
 │   ├── 01_segmentacao.ipynb  # Processamento de imagem e segmentacao Otsu
 │   ├── 02_extracao.ipynb     # Extracao de descritores geometricos
