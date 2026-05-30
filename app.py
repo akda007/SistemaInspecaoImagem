@@ -4,166 +4,482 @@ import numpy as np
 import pandas as pd
 import joblib
 from PIL import Image
-from skimage.feature import graycomatrix, graycoprops
+import os
 
-# TensorFlow imports for the Deep Learning model
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
-# ==========================================
-# 1. CONFIGURAÇÃO DA PÁGINA
-# ==========================================
-st.set_page_config(page_title="Inspeção Visual Automática", layout="wide")
-st.title("🍎 Sistema de Inspeção Visual Automática")
-st.markdown("Faça o upload de uma imagem para análise. Alterne entre o pipeline clássico e a rede neural para comparar os resultados no mundo real.")
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from skimage.feature import graycomatrix, graycoprops
 
-# ==========================================
-# 2. CARREGAMENTO DOS MODELOS (CACHE)
-# ==========================================
+# ==================================================
+# CONFIG
+# ==================================================
+st.set_page_config(page_title="Apple AI System", layout="wide")
+st.title("🍎 Apple Quality AI System (Fixed Pipeline)")
+
+# ==================================================
+# LOAD MODELS
+# ==================================================
 @st.cache_resource
-def load_all_models():
-    try:
-        # Modelos Clássicos
-        rf = joblib.load('outputs/modelos/rf_model.pkl')
-        scaler = joblib.load('outputs/modelos/scaler.pkl')
-        cols = joblib.load('outputs/modelos/colunas.pkl')
-        
-        # Modelo Deep Learning
-        cnn = load_model('outputs/modelos/mobilenetv2_frutas.h5')
-        
-        return rf, scaler, cols, cnn
-    except Exception as e:
-        st.error(f"Erro ao carregar modelos. Rode os notebooks 03 e 04 primeiro. Detalhe: {e}")
-        return None, None, None, None
+def load_models():
 
-rf_model, scaler, feature_columns, cnn_model = load_all_models()
+    rf_otsu = joblib.load("outputs/models/rf_otsu.pkl")
+    scaler_otsu = joblib.load("outputs/models/scaler_otsu.pkl")
+    cols_otsu = joblib.load("outputs/models/features_otsu.pkl")
 
-# ==========================================
-# 3. FUNÇÕES DE PROCESSAMENTO
-# ==========================================
-def processar_pipeline_classico(img_rgb):
-    """Aplica Otsu e extrai features matemáticas manuais."""
-    gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-    blurred = cv2.GaussianBlur(gray, (7, 7), 0)
-    _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    kernel = np.ones((5,5), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    
-    fruta_isolada = cv2.bitwise_and(img_rgb, img_rgb, mask=mask)
-    
-    features = {}
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return mask, fruta_isolada, None
-        
-    c = max(contours, key=cv2.contourArea)
-    
-    area = cv2.contourArea(c)
-    perimeter = cv2.arcLength(c, True)
-    features['area'] = area
-    features['perimeter'] = perimeter
-    features['circularity'] = (4 * np.pi * area) / (perimeter ** 2) if perimeter > 0 else 0
+    rf_gc = joblib.load("outputs/models/rf_grabcut.pkl")
+    scaler_gc = joblib.load("outputs/models/scaler_grabcut.pkl")
+    cols_gc = joblib.load("outputs/models/features_grabcut.pkl")
 
-    moments = cv2.moments(c)
-    hu_moments = cv2.HuMoments(moments).flatten()
-    for i, hu in enumerate(hu_moments):
-        features[f'hu_moment_{i}'] = -np.sign(hu) * np.log10(np.abs(hu)) if hu != 0 else 0
+    cnn = load_model("outputs/modelos/mobilenetv2_frutas.h5")
 
-    mean_val = cv2.mean(img_rgb, mask=mask)
-    features['mean_R'] = mean_val[0]
-    features['mean_G'] = mean_val[1]
-    features['mean_B'] = mean_val[2]
+    return rf_otsu, scaler_otsu, cols_otsu, rf_gc, scaler_gc, cols_gc, cnn
 
-    gray_masked = cv2.bitwise_and(gray, gray, mask=mask)
-    glcm = graycomatrix(gray_masked, distances=[1], angles=[0], levels=256, symmetric=True, normed=True)
-    features['glcm_contrast'] = graycoprops(glcm, 'contrast')[0, 0]
-    features['glcm_correlation'] = graycoprops(glcm, 'correlation')[0, 0]
-    features['glcm_energy'] = graycoprops(glcm, 'energy')[0, 0]
-    features['glcm_homogeneity'] = graycoprops(glcm, 'homogeneity')[0, 0]
 
-    return mask, fruta_isolada, features
+(
+    rf_otsu,
+    scaler_otsu,
+    cols_otsu,
+    rf_gc,
+    scaler_gc,
+    cols_gc,
+    cnn_model
+) = load_models()
 
-def processar_pipeline_cnn(img_rgb):
-    """Redimensiona e pré-processa a imagem para a MobileNetV2."""
-    img_resized = cv2.resize(img_rgb, (224, 224))
-    img_preprocessed = preprocess_input(img_resized)
-    # Expande a dimensão para simular o batch (1, 224, 224, 3)
-    img_batch = np.expand_dims(img_preprocessed, axis=0)
-    return img_resized, img_batch
-
-# ==========================================
-# 4. INTERFACE DO USUÁRIO
-# ==========================================
-# Painel lateral para configurações
-st.sidebar.header("⚙️ Configurações do Motor")
-motor_escolhido = st.sidebar.radio(
-    "Escolha a Arquitetura de IA:",
-    ("1. Pipeline Clássico (Random Forest)", "2. Deep Learning (MobileNetV2)")
+# ==================================================
+# NAVIGATION
+# ==================================================
+page = st.sidebar.radio(
+    "Navigation",
+    ["Single Image Demo", "Dataset Evaluation"]
 )
 
-uploaded_file = st.file_uploader("Upload da imagem...", type=["jpg", "jpeg", "png"])
+# ==================================================
+# PREPROCESSING
+# ==================================================
+def normalize(img):
 
-if uploaded_file is not None and rf_model is not None and cnn_model is not None:
-    image_pil = Image.open(uploaded_file)
-    img_rgb = np.array(image_pil)
-    
-    st.markdown("---")
-    
-    # ROTA 1: PIPELINE CLÁSSICO
-    if motor_escolhido == "1. Pipeline Clássico (Random Forest)":
-        st.subheader("Motor: Visão Computacional Clássica")
-        mask, fruta_isolada, features = processar_pipeline_classico(img_rgb)
-        
-        if features is None:
-            st.warning("Falha na segmentação de Otsu: Nenhum objeto detectado.")
-        else:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.image(img_rgb, caption='1. Imagem Original', use_column_width=True)
-            with col2:
-                st.image(mask, caption='2. Segmentação (Falha em fundos complexos)', use_column_width=True, clamp=True, channels='GRAY')
-            with col3:
-                st.image(fruta_isolada, caption='3. Objeto Isolado', use_column_width=True)
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
 
-            df_features = pd.DataFrame([features])[feature_columns]
-            scaled_features = scaler.transform(df_features)
-            
-            prediction = rf_model.predict(scaled_features)[0]
-            probabilidades = rf_model.predict_proba(scaled_features)[0]
-            confianca = max(probabilidades) * 100
-            
-            st.markdown("---")
-            if prediction == 'fresh':
-                st.success(f"✅ Veredito Clássico: FRESH (Fresco) | Confiança: {confianca:.1f}%")
-            else:
-                st.error(f"❌ Veredito Clássico: ROTTEN (Podre) | Confiança: {confianca:.1f}%")
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+    l = clahe.apply(l)
 
-            with st.expander("Ver Matriz de Features Matemáticas"):
-                df_display = df_features.T.reset_index()
-                df_display.columns = ['Feature', 'Valor Extraído']
-                st.dataframe(df_display, use_container_width=True)
+    lab = cv2.merge([l,a,b])
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
 
-    # ROTA 2: DEEP LEARNING (TRANSFER LEARNING)
+def keep_largest(mask):
+
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+
+    if n <= 1:
+        return mask
+
+    biggest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+
+    return (labels == biggest).astype(np.uint8) * 255
+
+# ==================================================
+# SEGMENTATION
+# ==================================================
+def otsu(img):
+
+    g = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    g = cv2.GaussianBlur(g, (7,7), 0)
+
+    _, m = cv2.threshold(
+        g, 0, 255,
+        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+
+    kernel = np.ones((5,5), np.uint8)
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, kernel)
+
+    return keep_largest(m)
+
+
+def grabcut(img):
+
+    h,w = img.shape[:2]
+
+    mask = np.zeros((h,w), np.uint8)
+
+    rect = (
+        int(w*0.15),
+        int(h*0.15),
+        int(w*0.7),
+        int(h*0.7)
+    )
+
+    bg = np.zeros((1,65), np.float64)
+    fg = np.zeros((1,65), np.float64)
+
+    cv2.grabCut(
+        img, mask, rect,
+        bg, fg, 5,
+        cv2.GC_INIT_WITH_RECT
+    )
+
+    m = np.where(
+        (mask==2)|(mask==0),
+        0,255
+    ).astype(np.uint8)
+
+    return keep_largest(m)
+
+# ==================================================
+# 🔥 FULL FEATURE EXTRACTOR (MATCHES TRAINING)
+# ==================================================
+def extract_features(img, mask):
+
+    contours,_ = cv2.findContours(
+        mask, cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if len(contours) == 0:
+        return None
+
+    c = max(contours, key=cv2.contourArea)
+
+    features = {}
+
+    # -------------------------
+    # Shape features
+    # -------------------------
+    area = cv2.contourArea(c)
+    per = cv2.arcLength(c, True)
+
+    features["area"] = area
+    features["perimeter"] = per
+    features["circularity"] = (4*np.pi*area)/(per**2+1e-6)
+
+    x,y,w,h = cv2.boundingRect(c)
+    features["aspect_ratio"] = w/(h+1e-6)
+    features["extent"] = area/(w*h+1e-6)
+
+    hull = cv2.convexHull(c)
+    hull_area = cv2.contourArea(hull)
+    features["solidity"] = area/(hull_area+1e-6)
+
+    # -------------------------
+    # Hu moments
+    # -------------------------
+    m = cv2.moments(c)
+    hu = cv2.HuMoments(m).flatten()
+
+    for i,v in enumerate(hu):
+        features[f"hu_moment_{i}"] = -np.sign(v)*np.log10(abs(v)+1e-6)
+
+    # -------------------------
+    # Color features
+    # -------------------------
+    mean = cv2.mean(img, mask=mask)
+    features["mean_R"] = mean[0]
+    features["mean_G"] = mean[1]
+    features["mean_B"] = mean[2]
+
+    # -------------------------
+    # Texture (GLCM SAFE)
+    # -------------------------
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    pixels = gray[mask > 0]
+
+    if len(pixels) > 1000:
+
+        size = int(np.sqrt(len(pixels)))
+        pixels = pixels[:size*size]
+        tex = pixels.reshape(size, size)
+
+        glcm = graycomatrix(
+            tex,
+            distances=[1],
+            angles=[0],
+            levels=256,
+            symmetric=True,
+            normed=True
+        )
+
+        features["glcm_contrast"] = graycoprops(glcm,"contrast")[0,0]
+        features["glcm_correlation"] = graycoprops(glcm,"correlation")[0,0]
+        features["glcm_energy"] = graycoprops(glcm,"energy")[0,0]
+        features["glcm_homogeneity"] = graycoprops(glcm,"homogeneity")[0,0]
+
     else:
-        st.subheader("Motor: Rede Neural Convolucional (MobileNetV2)")
-        img_resized, img_batch = processar_pipeline_cnn(img_rgb)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.image(img_rgb, caption='1. Imagem Original', use_column_width=True)
-        with col2:
-            st.image(img_resized, caption='2. Resize para 224x224 (Sem corte de fundo)', use_column_width=True)
+        features["glcm_contrast"] = 0
+        features["glcm_correlation"] = 0
+        features["glcm_energy"] = 0
+        features["glcm_homogeneity"] = 0
 
-        probabilidade_rotten = cnn_model.predict(img_batch)[0][0]
-        
-        st.markdown("---")
-        # Se a probabilidade de ser classe 1 (Rotten) for maior que 50%
-        if probabilidade_rotten > 0.5:
-            confianca = probabilidade_rotten * 100
-            st.error(f"❌ Veredito CNN: ROTTEN (Podre) | Confiança: {confianca:.1f}%")
+    return features
+
+# ==================================================
+# CNN
+# ==================================================
+def prep_cnn(img):
+
+    r = cv2.resize(img,(224,224))
+    return r, np.expand_dims(preprocess_input(r),0)
+
+# ==================================================
+# SINGLE IMAGE PAGE
+# ==================================================
+def single_page():
+
+    st.header("Single Image Test")
+
+    file = st.file_uploader("Upload image", type=["jpg","png","jpeg"])
+
+    if file:
+
+        img = np.array(Image.open(file).convert("RGB"))
+        img = normalize(img)
+
+        m1 = otsu(img)
+        m2 = grabcut(img)
+
+        f1 = extract_features(img,m1)
+        f2 = extract_features(img,m2)
+
+        cnn_img, cnn_in = prep_cnn(img)
+
+        col1,col2,col3 = st.columns(3)
+
+        # OTSU
+        with col1:
+            st.subheader("Otsu RF")
+            st.image(img)
+            st.image(m1)
+
+            if f1:
+                df = pd.DataFrame([f1]).reindex(columns=cols_otsu, fill_value=0)
+
+                pred = rf_otsu.predict(scaler_otsu.transform(df))[0]
+                conf = max(rf_otsu.predict_proba(scaler_otsu.transform(df))[0])*100
+
+                st.metric(pred, f"{conf:.1f}%")
+
+        # GRABCUT
+        with col2:
+            st.subheader("GrabCut RF")
+            st.image(img)
+            st.image(m2)
+
+            if f2:
+                df = pd.DataFrame([f2]).reindex(columns=cols_gc, fill_value=0)
+
+                pred = rf_gc.predict(scaler_gc.transform(df))[0]
+                conf = max(rf_gc.predict_proba(scaler_gc.transform(df))[0])*100
+
+                st.metric(pred, f"{conf:.1f}%")
+
+        # CNN
+        with col3:
+            st.subheader("CNN")
+            st.image(img)
+            st.image(cnn_img)
+
+            p = cnn_model.predict(cnn_in, verbose=0)[0][0]
+
+            if p > 0.5:
+                st.metric("rotten", f"{p*100:.1f}%")
+            else:
+                st.metric("fresh", f"{(1-p)*100:.1f}%")
+
+# ==================================================
+# DATASET EVALUATION PAGE (SAFE)
+# ==================================================
+def dataset_page():
+
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    st.header("📊 Dataset Evaluation Dashboard")
+
+    path = st.text_input("Dataset path", "../dataset")
+    limit = st.slider("Max images per run", 10, 300, 80)
+
+    if st.button("Run Evaluation"):
+
+        results = []
+        misclassified = []
+
+        count = 0
+
+        for root, _, files in os.walk(path):
+
+            for f in files:
+
+                if not f.lower().endswith(("jpg","jpeg","png")):
+                    continue
+
+                try:
+                    img = np.array(Image.open(os.path.join(root,f)).convert("RGB"))
+                except:
+                    continue
+
+                img = normalize(img)
+
+                m1 = otsu(img)
+                m2 = grabcut(img)
+
+                f1 = extract_features(img, m1)
+                f2 = extract_features(img, m2)
+
+                true_label = "fresh" if "Good" in root else "rotten"
+
+                # ------------------------
+                # OTSU
+                # ------------------------
+                if f1:
+                    df = pd.DataFrame([f1]).reindex(columns=cols_otsu, fill_value=0)
+                    pred_otsu = rf_otsu.predict(scaler_otsu.transform(df))[0]
+                    conf_otsu = max(rf_otsu.predict_proba(scaler_otsu.transform(df))[0])
+                else:
+                    pred_otsu = "error"
+                    conf_otsu = 0
+
+                # ------------------------
+                # GRABCUT
+                # ------------------------
+                if f2:
+                    df = pd.DataFrame([f2]).reindex(columns=cols_gc, fill_value=0)
+                    pred_gc = rf_gc.predict(scaler_gc.transform(df))[0]
+                    conf_gc = max(rf_gc.predict_proba(scaler_gc.transform(df))[0])
+                else:
+                    pred_gc = "error"
+                    conf_gc = 0
+
+                results.append({
+                    "true": true_label,
+                    "otsu": pred_otsu,
+                    "grabcut": pred_gc,
+                    "conf_otsu": conf_otsu,
+                    "conf_grabcut": conf_gc,
+                    "img": img
+                })
+
+                # track mistakes
+                if pred_otsu != true_label or pred_gc != true_label:
+                    misclassified.append({
+                        "img": img,
+                        "true": true_label,
+                        "otsu": pred_otsu,
+                        "grabcut": pred_gc
+                    })
+
+                count += 1
+                if count >= limit:
+                    break
+
+            if count >= limit:
+                break
+
+        df = pd.DataFrame(results)
+
+        if len(df) == 0:
+            st.warning("No valid images found.")
+            return
+
+        # ==================================================
+        # 📊 1. ACCURACY COMPARISON
+        # ==================================================
+        st.subheader("📊 Model Accuracy Comparison")
+
+        acc_otsu = np.mean(df["otsu"] == df["true"])
+        acc_gc = np.mean(df["grabcut"] == df["true"])
+
+        fig, ax = plt.subplots(figsize=(6,4))
+        sns.barplot(
+            x=["Otsu RF", "GrabCut RF"],
+            y=[acc_otsu, acc_gc],
+            palette="viridis",
+            ax=ax
+        )
+
+        ax.set_ylim(0,1)
+        ax.set_ylabel("Accuracy")
+        ax.set_title("Model Comparison")
+
+        st.pyplot(fig)
+
+        # ==================================================
+        # 📊 2. CONFUSION MATRICES
+        # ==================================================
+        st.subheader("🔥 Confusion Matrices")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.write("Otsu")
+            cm1 = confusion_matrix(df["true"], df["otsu"])
+            fig, ax = plt.subplots()
+            sns.heatmap(cm1, annot=True, fmt="d", cmap="Blues",
+                        xticklabels=["fresh","rotten"],
+                        yticklabels=["fresh","rotten"])
+            ax.set_title("Otsu RF")
+            st.pyplot(fig)
+
+        with col2:
+            st.write("GrabCut")
+            cm2 = confusion_matrix(df["true"], df["grabcut"])
+            fig, ax = plt.subplots()
+            sns.heatmap(cm2, annot=True, fmt="d", cmap="Greens",
+                        xticklabels=["fresh","rotten"],
+                        yticklabels=["fresh","rotten"])
+            ax.set_title("GrabCut RF")
+            st.pyplot(fig)
+
+        # ==================================================
+        # 📊 3. CONFIDENCE DISTRIBUTION
+        # ==================================================
+        st.subheader("📈 Prediction Confidence Distribution")
+
+        fig, ax = plt.subplots()
+        sns.kdeplot(df["conf_otsu"], label="Otsu", fill=True)
+        sns.kdeplot(df["conf_grabcut"], label="GrabCut", fill=True)
+
+        ax.set_xlabel("Confidence")
+        ax.set_ylabel("Density")
+        ax.legend()
+        st.pyplot(fig)
+
+        # ==================================================
+        # 📊 4. CLASS DISTRIBUTION
+        # ==================================================
+        st.subheader("📦 Class Distribution")
+
+        fig, ax = plt.subplots()
+        sns.countplot(x=df["true"], palette="pastel", ax=ax)
+        ax.set_title("True Labels Distribution")
+        st.pyplot(fig)
+
+        # ==================================================
+        # ❌ 5. MISCLASSIFIED SAMPLES GALLERY
+        # ==================================================
+        st.subheader("❌ Misclassified Samples")
+
+        if len(misclassified) == 0:
+            st.success("No misclassifications 🎉")
         else:
-            confianca = (1 - probabilidade_rotten) * 100
-            st.success(f"✅ Veredito CNN: FRESH (Fresco) | Confiança: {confianca:.1f}%")
-            
-        st.info("💡 Note que a CNN não depende da segmentação do fundo (Otsu) nem de cálculos manuais de área/cor. Ela processa os pixels diretamente, tornando-a muito mais robusta para imagens do mundo real.")
+            cols = st.columns(3)
+
+            for i, item in enumerate(misclassified[:9]):
+
+                with cols[i % 3]:
+                    st.image(item["img"], caption=f"""
+True: {item['true']}
+Otsu: {item['otsu']}
+GrabCut: {item['grabcut']}
+""", use_column_width=True)
+
+
+# ==================================================
+# ROUTER
+# ==================================================
+if page == "Single Image Demo":
+    single_page()
+else:
+    dataset_page()
