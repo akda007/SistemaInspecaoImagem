@@ -1,0 +1,5 @@
+Segmentação,Classificador,Val Acc,Test Acc,Precisão,Recall,F1,AUC
+Otsu,Random Forest,0.8812,0.8688,0.8554,0.8875,0.8712,0.9384
+Otsu,SVM (RBF),0.8625,0.875,0.8659,0.8875,0.8765,0.9419
+GrabCut,Random Forest,0.9187,0.9625,0.9744,0.95,0.962,0.9933
+GrabCut,SVM (RBF),0.9062,0.9688,0.963,0.975,0.9689,0.9933
