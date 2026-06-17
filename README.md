@@ -49,7 +49,9 @@ cd projeto-inspecao-frutas
 2. Configure o ambiente virtual:
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+
+(linux) source .venv/bin/activate
+(windows) .venv\Scripts\activate
 ```
 3. Instale as dependencias:
 ```bash
