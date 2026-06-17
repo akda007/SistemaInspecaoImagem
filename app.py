@@ -633,7 +633,7 @@ def page_dataset():
         conf_col = f"{key}_conf"
         if conf_col not in df.columns: continue
         scores = df.loc[mask_valid, conf_col].values
-        y_bin  = 1 if (y_true == "rotten") else 0
+        y_bin = (y_true == "rotten").astype(int)
         fpr, tpr, _ = roc_curve(y_bin, scores)
         roc_auc = auc(fpr, tpr)
         lbl = MODELS[key]["label"] if key in MODELS else "CNN"

@@ -8,18 +8,18 @@ Este repositorio documenta a implementacao de um sistema automatizado para triag
 ### Estrutura do Repositorio
 ```text
 .
-├── dataset/                  # Dataset de dados truncado para maçãs
-├── notebooks/                # Jupyter Notebooks de desenvolvimento
-│   ├── 01_segmentacao.ipynb  # Processamento de imagem e segmentacao Otsu
-│   ├── 02_extracao.ipynb     # Extracao de descritores geometricos
-│   ├── 03_classificacao.ipynb# Modelos Random Forest e SVM
-│   └── 04_cnn_xai_bonus.ipynb# MobileNetV2 e explicabilidade (SHAP)
-├── outputs/                  # Artefatos, modelos e logs gerados
-│   ├── modelos/              # Pesos (.h5) e objetos serializados (.pkl)
-│   └── shap_graficos.png     # Visualizacoes de explicabilidade
-├── app.py                    # Aplicacao Streamlit para demonstracao
-├── requirements.txt          # Dependencias do ambiente
-└── README.md                 # Documentacao tecnica
+├── dataset/                   # Dataset de dados truncado para maçãs
+├── notebooks/                 # Jupyter Notebooks de desenvolvimento
+│   ├── 01_segmentacao.ipynb   # Processamento de imagem e segmentacao Otsu
+│   ├── 02_extracao.ipynb      # Extracao de descritores geometricos
+│   ├── 03_classificacao.ipynb # Modelos Random Forest e SVM
+│   └── 04_cnn_xai_bonus.ipynb # MobileNetV2 e explicabilidade (SHAP)
+├── outputs/                   # Artefatos, modelos e logs gerados
+│   ├── modelos/               # Pesos (.h5) e objetos serializados (.pkl)
+│   └── shap_graficos.png      # Visualizacoes de explicabilidade
+├── app.py                     # Aplicacao Streamlit para demonstracao
+├── requirements.txt           # Dependencias do ambiente
+└── README.md                  # Documentacao tecnica
 
 ```
 
@@ -43,7 +43,7 @@ Para replicar o ambiente de desenvolvimento, utilize as seguintes instrucoes:
 
 1. Clone o repositorio:
 ```bash
-git clone https://github.com/seu-usuario/projeto-inspecao-frutas.git
+git clone https://github.com/akda007/SistemaInspecaoImagem
 cd projeto-inspecao-frutas
 ```
 2. Configure o ambiente virtual:
@@ -68,6 +68,6 @@ O modelo foi validado sob uma amostragem estratificada de 1.600 imagens (800 Fre
 
 Este projeto e de carater academico, desenvolvido como requisito parcial para a disciplina de Visao Computacional.
 
-Autor: Andrey Koch de Araujo
+Autor: Andrey Koch de Araujo, Pedro Lima Barriola, Julia Soupinski, Thiago Cardozo
 Instituicao: Universidade Positivo
 
